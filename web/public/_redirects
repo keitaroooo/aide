@@ -1,0 +1,5 @@
+/*
+  SPA fallback for Cloudflare Pages
+*/
+/* /api/*  https://aide-api.<account>.workers.dev/:splat  200 */
+/*    /index.html   200
