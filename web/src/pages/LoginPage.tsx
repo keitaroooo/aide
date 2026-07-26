@@ -24,28 +24,26 @@ export function LoginPage() {
   return (
     <div className="login-screen">
       <div className="login-panel card fade-in stack">
-        <p className="muted">アシスタント型タスク</p>
+        <p className="muted">暮らしのアシスタント</p>
         <h1>Aide</h1>
-        <p className="muted">
-          直近・やるべき・いつかを、自然言語で整える。優先度の並べ替えはあなたが言葉で伝える。
+        <p className="muted">話すだけで、やることを整える。</p>
+
+        <a className="btn primary" href="/api/auth/google">
+          Google でログイン
+        </a>
+        <p className="muted" style={{ margin: 0 }}>
+          Google のログイン画面へ移動し、Tasks / カレンダーを取り込みます。
         </p>
 
-        {features?.googleOAuth && (
-          <a className="btn primary" href="/api/auth/google">
-            Google で続ける
-          </a>
-        )}
-        {features?.githubOAuth && (
-          <a className="btn" href="/api/auth/github">
-            GitHub で続ける
-          </a>
-        )}
+        <a className="btn" href="/api/auth/github">
+          GitHub でログイン
+        </a>
 
         {features?.allowDevLogin && (
           <>
             <hr style={{ border: 0, borderTop: "1px solid var(--line)", margin: "0.4rem 0" }} />
             <label className="muted" htmlFor="dev-name">
-              開発用ログイン
+              開発用（OAuth なし）
             </label>
             <input
               id="dev-name"
@@ -54,13 +52,9 @@ export function LoginPage() {
               onChange={(e) => setName(e.target.value)}
             />
             <button className="btn accent" disabled={busy} onClick={() => void devLogin()}>
-              {busy ? "…" : "はじめる"}
+              {busy ? "…" : "開発ログイン"}
             </button>
           </>
-        )}
-
-        {!features?.allowDevLogin && !features?.googleOAuth && !features?.githubOAuth && (
-          <p className="muted">OAuth が未設定です。サーバーの環境変数を確認してください。</p>
         )}
 
         {error && <p style={{ color: "var(--accent)" }}>{error}</p>}

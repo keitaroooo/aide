@@ -57,7 +57,10 @@ export const client = {
     api<{
       soon: Task[];
       should: Task[];
-      todayEvents: Array<{ id: string; title: string; start_at: string | null }>;
+      todayEvents: Array<{ id: string; title: string; start_at: string | null; day?: string }>;
+      weekEvents: Array<{ id: string; title: string; start_at: string | null; day?: string }>;
+      timezone: string;
+      today: string;
     }>("/api/home"),
   board: () =>
     api<{
@@ -92,6 +95,19 @@ export const client = {
     api<{ imported: number; skipped: number; project?: string }>(
       "/api/import/github-projects",
       { method: "POST", body: JSON.stringify({ number }) },
+    ),
+  importMdLists: (
+    items: Array<{
+      title: string;
+      source_ref: string;
+      done?: boolean;
+      notes?: string | null;
+      horizon?: "someday" | "soon" | "should" | "inbox";
+    }>,
+  ) =>
+    api<{ imported: number; updated: number; skipped: number; completed: number }>(
+      "/api/import/md-lists",
+      { method: "POST", body: JSON.stringify({ items }) },
     ),
   pushSubscribe: (sub: PushSubscriptionJSON) =>
     api<{ ok: boolean }>("/api/push/subscribe", {

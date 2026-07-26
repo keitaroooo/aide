@@ -15,7 +15,7 @@ export default defineConfig({
       manifest: {
         name: "Aide",
         short_name: "Aide",
-        description: "アシスタント型タスク — 直近・やるべき・いつか",
+        description: "話すだけで、やることを整える",
         theme_color: "#1a3a2f",
         background_color: "#f3efe6",
         display: "standalone",
@@ -32,7 +32,9 @@ export default defineConfig({
     }),
   ],
   server: {
-    port: 5173,
+    host: "127.0.0.1",
+    port: 5180,
+    strictPort: true,
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8790",

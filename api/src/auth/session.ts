@@ -1,6 +1,8 @@
-import { createUser, getUser } from "../db";
+import { createUser, getUser, updateUserSettings } from "../db";
 import type { Env, User } from "../types";
 import { id, nowIso } from "../types";
+
+const DEV_USER_ID = "dev:local";
 
 const COOKIE = "aide_session";
 const SESSION_DAYS = 30;
@@ -95,8 +97,16 @@ export async function findOrCreateOAuthUser(
   });
 }
 
+/** Stable single user for ALLOW_DEV_LOGIN — session is reissued, user is reused. */
 export async function createDevUser(env: Env, name: string): Promise<User> {
-  return createUser(env.DB, { id: `dev:${id()}`, name, email: null });
+  const existing = await getUser(env.DB, DEV_USER_ID);
+  if (existing) {
+    if (name && name !== existing.name) {
+      return (await updateUserSettings(env.DB, DEV_USER_ID, { name })) ?? existing;
+    }
+    return existing;
+  }
+  return createUser(env.DB, { id: DEV_USER_ID, name, email: "dev@local" });
 }
 
 /** Signed state for OAuth CSRF. */

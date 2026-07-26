@@ -1,6 +1,6 @@
 export type Horizon = "inbox" | "soon" | "should" | "someday";
 export type TaskStatus = "open" | "done";
-export type TaskSource = "manual" | "google_cal" | "google_tasks" | "github";
+export type TaskSource = "manual" | "google_cal" | "google_tasks" | "github" | "md_list";
 
 export interface Env {
   DB: D1Database;

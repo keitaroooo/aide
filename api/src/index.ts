@@ -1,7 +1,13 @@
 import { handleAuth } from "./auth/routes";
 import { requireUser } from "./auth/session";
 import { deletePushSub, listChat, savePushSub } from "./db";
-import { importGitHubProjects, importGoogleCalendar, importGoogleTasks } from "./import";
+import {
+  importGitHubProjects,
+  importGoogleCalendar,
+  importGoogleTasks,
+  importMdLists,
+  type MdListItem,
+} from "./import";
 import { runDigestCron } from "./push/webpush";
 import { handleTasks } from "./routes/tasks";
 import { runSecretary } from "./secretary";
@@ -12,6 +18,8 @@ function corsHeaders(req: Request, env: Env): HeadersInit {
   const origin = req.headers.get("Origin") || env.APP_URL;
   const allowed = new Set([
     env.APP_URL.replace(/\/$/, ""),
+    "http://127.0.0.1:5180",
+    "http://localhost:5180",
     "http://127.0.0.1:5173",
     "http://localhost:5173",
   ]);
@@ -88,6 +96,21 @@ async function route(req: Request, env: Env): Promise<Response> {
     const body = (await req.json().catch(() => ({}))) as { owner?: string; number?: number };
     try {
       const result = await importGitHubProjects(env, user, body);
+      return json(result);
+    } catch (e) {
+      return error(e instanceof Error ? e.message : "import failed", 400);
+    }
+  }
+
+  if (path === "/api/import/md-lists" && req.method === "POST") {
+    const user = await requireUser(env, req);
+    if (user instanceof Response) return user;
+    const body = (await req.json().catch(() => ({}))) as { items?: MdListItem[] };
+    if (!Array.isArray(body.items) || body.items.length === 0) {
+      return error("items must be a non-empty array");
+    }
+    try {
+      const result = await importMdLists(env, user, body.items);
       return json(result);
     } catch (e) {
       return error(e instanceof Error ? e.message : "import failed", 400);

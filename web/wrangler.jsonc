@@ -1,0 +1,11 @@
+{
+  "name": "aide",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-07-26",
+  "services": [
+    {
+      "binding": "API",
+      "service": "aide-api"
+    }
+  ]
+}

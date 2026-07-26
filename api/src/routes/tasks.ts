@@ -3,6 +3,24 @@ import type { Env, Horizon } from "../types";
 import { error, id, isHorizon, json } from "../types";
 import { requireUser } from "../auth/session";
 
+/** Calendar date YYYY-MM-DD in a timezone. */
+function ymdInTz(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+/** Day key for an event start (date-only or datetime ISO). */
+function eventDay(startAt: string, timeZone: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(startAt)) return startAt;
+  const d = new Date(startAt);
+  if (Number.isNaN(d.getTime())) return startAt.slice(0, 10);
+  return ymdInTz(d, timeZone);
+}
+
 export async function handleTasks(req: Request, env: Env, path: string): Promise<Response | null> {
   if (path === "/api/tasks" && req.method === "GET") {
     const user = await requireUser(env, req);
@@ -80,10 +98,25 @@ export async function handleTasks(req: Request, env: Env, path: string): Promise
       listTasks(env.DB, user.id, { horizon: "should" }),
       listEvents(env.DB, user.id),
     ]);
-    const today = new Date().toISOString().slice(0, 10);
-    const dueToday = should.filter((t) => t.due_at && t.due_at.slice(0, 10) <= today);
-    const todayEvents = events.filter((e) => e.start_at && e.start_at.slice(0, 10) === today);
-    return json({ soon, should: dueToday.length ? dueToday : should.slice(0, 8), todayEvents });
+    const tz = user.timezone || "Asia/Tokyo";
+    const today = ymdInTz(new Date(), tz);
+    const weekEnd = ymdInTz(new Date(Date.now() + 6 * 24 * 60 * 60 * 1000), tz);
+    const dueToday = should.filter((t) => t.due_at && eventDay(t.due_at, tz) <= today);
+    const dated = events
+      .filter((e) => e.start_at)
+      .map((e) => ({ ...e, day: eventDay(e.start_at!, tz) }))
+      .filter((e) => e.day >= today && e.day <= weekEnd)
+      .sort((a, b) => (a.start_at! < b.start_at! ? -1 : a.start_at! > b.start_at! ? 1 : 0));
+    const todayEvents = dated.filter((e) => e.day === today);
+    const weekEvents = dated;
+    return json({
+      soon,
+      should: dueToday.length ? dueToday : should.slice(0, 8),
+      todayEvents,
+      weekEvents,
+      timezone: tz,
+      today,
+    });
   }
 
   if (path === "/api/board" && req.method === "GET") {
