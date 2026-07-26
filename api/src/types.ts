@@ -8,6 +8,8 @@ export interface Env {
   SESSION_SECRET: string;
   APP_URL: string;
   ALLOW_DEV_LOGIN?: string;
+  OWNER_EMAIL?: string;
+  AUTOMATION_TOKEN?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GITHUB_CLIENT_ID?: string;

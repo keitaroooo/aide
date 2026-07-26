@@ -370,6 +370,8 @@ npm run dev                      # http://127.0.0.1:5180 → /api を 8790 へ�
 | `SESSION_SECRET` | セッション · OAuth state |
 | `APP_URL` | フロント origin（`http://127.0.0.1:5180`） |
 | `ALLOW_DEV_LOGIN` | 開発ログイン |
+| `OWNER_EMAIL` | `AUTOMATION_TOKEN` が成りすますユーザーのメール |
+| `AUTOMATION_TOKEN` | 取込スクリプト用。`X-Aide-Automation-Token` ヘッダで送る |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google ログイン · Calendar/Tasks |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub ログイン · Projects |
 | `VAPID_*` | Web Push |
@@ -387,3 +389,10 @@ npm run dev                      # http://127.0.0.1:5180 → /api を 8790 へ�
 ### Access（Cloudflare Zero Trust）
 
 本番 Pages（`https://aide-1ll.pages.dev` · preview `*.aide-1ll.pages.dev`）と API 直叩き（`https://aide-api.keitaro-cryptocurrency.workers.dev`）は **Cloudflare Access の背後**にある。ブラウザでは許可メールへの OTP ログイン。import スクリプト等は Access セッション / Service Token が要るか、ブラウザ認証後の Pages 経由で叩く。
+
+Access は「URL に届く人」を絞るだけで、**誰のタスクか**は aide 側のログインで決まる。門は 2 つある:
+
+| | 誰を通すか | 自動化での渡し方 |
+|--|-----------|-----------------|
+| Cloudflare Access | 許可メール · Service Token | `CF-Access-Client-Id` / `CF-Access-Client-Secret` |
+| aide のセッション | Google ログイン · 開発ログイン | `X-Aide-Automation-Token`（= `AUTOMATION_TOKEN`） |

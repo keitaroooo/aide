@@ -18,6 +18,7 @@
   },
   "vars": {
     "ALLOW_DEV_LOGIN": "true",
-    "APP_URL": "https://aide-1ll.pages.dev"
+    "APP_URL": "https://aide-1ll.pages.dev",
+    "OWNER_EMAIL": "keitaro.cryptocurrency@gmail.com"
   }
 }

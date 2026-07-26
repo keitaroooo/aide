@@ -1,6 +1,9 @@
 SESSION_SECRET=dev-session-secret-change-me
 ALLOW_DEV_LOGIN=true
 APP_URL=http://127.0.0.1:5180
+# 取込スクリプト用。OWNER_EMAIL のユーザーとして API を叩ける
+# OWNER_EMAIL=you@example.com
+# AUTOMATION_TOKEN=
 # GOOGLE_CLIENT_ID=
 # GOOGLE_CLIENT_SECRET=
 # GITHUB_CLIENT_ID=

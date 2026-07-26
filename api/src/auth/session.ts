@@ -6,6 +6,7 @@ const DEV_USER_ID = "dev:local";
 
 const COOKIE = "aide_session";
 const SESSION_DAYS = 30;
+const AUTOMATION_HEADER = "X-Aide-Automation-Token";
 
 async function hmacSign(secret: string, value: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -64,7 +65,29 @@ export async function destroySession(env: Env, sessionId: string): Promise<void>
   await env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(sessionId).run();
 }
 
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Cookie を持てない取込スクリプト用。オーナーとして扱うので Access の内側でのみ使う。 */
+async function automationUser(env: Env, request: Request): Promise<User | null> {
+  const token = request.headers.get(AUTOMATION_HEADER);
+  if (!token || !env.AUTOMATION_TOKEN || !env.OWNER_EMAIL) return null;
+  if (!constantTimeEqual(token, env.AUTOMATION_TOKEN)) return null;
+  const row = await env.DB.prepare(`SELECT id FROM users WHERE email = ? LIMIT 1`)
+    .bind(env.OWNER_EMAIL)
+    .first<{ id: string }>();
+  if (!row) return null;
+  return getUser(env.DB, row.id);
+}
+
 export async function requireUser(env: Env, request: Request): Promise<User | Response> {
+  const automation = await automationUser(env, request);
+  if (automation) return automation;
+
   const sessionId = readSessionId(request);
   if (!sessionId) return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   const row = await env.DB.prepare(
