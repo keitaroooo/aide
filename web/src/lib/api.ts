@@ -1,4 +1,6 @@
 export type Horizon = "inbox" | "soon" | "should" | "someday";
+export const DOMAINS = ["assets", "engineering", "health", "self", "trip"] as const;
+export type Domain = (typeof DOMAINS)[number];
 
 export interface User {
   id: string;
@@ -14,8 +16,21 @@ export interface Task {
   notes: string | null;
   horizon: Horizon;
   due_at: string | null;
+  /** 0=低 1=中 2=高 */
+  priority?: number;
+  domain?: Domain | null;
   status: string;
   source: string;
+}
+
+export const PRIORITY_LABEL = ["低", "中", "高"] as const;
+
+export function domainOf(t: Task): Domain | null {
+  if (t.domain && (DOMAINS as readonly string[]).includes(t.domain)) return t.domain;
+  const m = t.notes?.match(/(?:^|\s)domain=([a-z]+)/i);
+  const d = m?.[1]?.toLowerCase();
+  if (d && (DOMAINS as readonly string[]).includes(d)) return d as Domain;
+  return null;
 }
 
 export interface Features {
@@ -24,6 +39,8 @@ export interface Features {
   webPush: boolean;
   vapidPublicKey: string | null;
   allowDevLogin: boolean;
+  /** Access OTP 済み（本番スマホ）。Google なしで入れる */
+  accessLogin?: boolean;
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -53,24 +70,30 @@ export const client = {
       body: JSON.stringify({ name }),
     }),
   logout: () => api<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  accessLogin: () =>
+    api<{ user: User }>("/api/auth/access-login", { method: "POST" }),
+  ownerLogin: (email: string) =>
+    api<{ user: User }>("/api/auth/owner-login", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
   home: () =>
     api<{
+      inbox: Task[];
       soon: Task[];
       should: Task[];
+      someday: Task[];
       todayEvents: Array<{ id: string; title: string; start_at: string | null; day?: string }>;
       weekEvents: Array<{ id: string; title: string; start_at: string | null; day?: string }>;
       timezone: string;
       today: string;
     }>("/api/home"),
-  board: () =>
-    api<{
-      board: Record<Horizon, Task[]>;
-    }>("/api/board"),
   createTask: (input: {
     title: string;
     notes?: string;
     horizon?: Horizon;
     due_at?: string | null;
+    domain?: Domain | null;
   }) => api<{ task: Task }>("/api/tasks", { method: "POST", body: JSON.stringify(input) }),
   patchTask: (id: string, patch: Partial<Task>) =>
     api<{ task: Task }>(`/api/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -85,17 +108,6 @@ export const client = {
     ),
   settings: (patch: { digest_time?: string; timezone?: string; name?: string }) =>
     api<{ user: User }>("/api/settings", { method: "PATCH", body: JSON.stringify(patch) }),
-  importGoogleTasks: () =>
-    api<{ imported: number; skipped: number }>("/api/import/google-tasks", { method: "POST" }),
-  importGoogleCalendar: () =>
-    api<{ imported: number; skipped: number }>("/api/import/google-calendar", {
-      method: "POST",
-    }),
-  importGitHub: (number?: number) =>
-    api<{ imported: number; skipped: number; project?: string }>(
-      "/api/import/github-projects",
-      { method: "POST", body: JSON.stringify({ number }) },
-    ),
   importMdLists: (
     items: Array<{
       title: string;
@@ -117,11 +129,4 @@ export const client = {
   pushTest: () => api<{ sent: number; body: string }>("/api/push/test", { method: "POST" }),
   eventToTask: (eventId: string) =>
     api<{ task: Task }>(`/api/events/${eventId}/to-task`, { method: "POST" }),
-};
-
-export const HORIZON_LABEL: Record<Horizon, string> = {
-  inbox: "Inbox",
-  soon: "直近",
-  should: "やるべき",
-  someday: "いつか",
 };

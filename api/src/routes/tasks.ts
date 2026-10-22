@@ -1,6 +1,6 @@
 import { createTask, listEvents, listTasks, updateTask, updateUserSettings } from "../db";
-import type { Env, Horizon } from "../types";
-import { error, id, isHorizon, json } from "../types";
+import type { Domain, Env, Horizon } from "../types";
+import { error, id, isDomain, isHorizon, json } from "../types";
 import { requireUser } from "../auth/session";
 
 /** Calendar date YYYY-MM-DD in a timezone. */
@@ -43,10 +43,14 @@ export async function handleTasks(req: Request, env: Env, path: string): Promise
       notes?: string;
       horizon?: string;
       due_at?: string | null;
+      domain?: string | null;
     };
     if (!body.title?.trim()) return error("title required");
     const horizon: Horizon =
       body.horizon && isHorizon(body.horizon) ? body.horizon : "inbox";
+    if (body.domain != null && body.domain !== "" && !isDomain(body.domain)) {
+      return error("invalid domain");
+    }
     const task = await createTask(env.DB, {
       id: id(),
       user_id: user.id,
@@ -54,6 +58,7 @@ export async function handleTasks(req: Request, env: Env, path: string): Promise
       notes: body.notes ?? null,
       horizon,
       due_at: body.due_at ?? null,
+      domain: body.domain ? (body.domain as Domain) : null,
     });
     return json({ task }, 201);
   }
@@ -68,14 +73,34 @@ export async function handleTasks(req: Request, env: Env, path: string): Promise
       notes?: string | null;
       horizon?: string;
       due_at?: string | null;
+      priority?: number;
+      domain?: string | null;
       status?: "open" | "done";
     };
     if (body.horizon && !isHorizon(body.horizon)) return error("invalid horizon");
+    if (body.domain != null && body.domain !== "" && !isDomain(body.domain)) {
+      return error("invalid domain");
+    }
+    if (
+      body.priority !== undefined &&
+      body.priority !== 0 &&
+      body.priority !== 1 &&
+      body.priority !== 2
+    ) {
+      return error("invalid priority");
+    }
     const task = await updateTask(env.DB, user.id, taskId, {
       title: body.title,
       notes: body.notes,
       horizon: body.horizon as Horizon | undefined,
       due_at: body.due_at,
+      priority: body.priority,
+      domain:
+        body.domain === undefined
+          ? undefined
+          : body.domain === "" || body.domain === null
+            ? null
+            : (body.domain as Domain),
       status: body.status,
     });
     if (!task) return error("not found", 404);
@@ -93,15 +118,16 @@ export async function handleTasks(req: Request, env: Env, path: string): Promise
   if (path === "/api/home" && req.method === "GET") {
     const user = await requireUser(env, req);
     if (user instanceof Response) return user;
-    const [soon, should, events] = await Promise.all([
+    const [inbox, soon, should, someday, events] = await Promise.all([
+      listTasks(env.DB, user.id, { horizon: "inbox" }),
       listTasks(env.DB, user.id, { horizon: "soon" }),
       listTasks(env.DB, user.id, { horizon: "should" }),
+      listTasks(env.DB, user.id, { horizon: "someday" }),
       listEvents(env.DB, user.id),
     ]);
     const tz = user.timezone || "Asia/Tokyo";
     const today = ymdInTz(new Date(), tz);
     const weekEnd = ymdInTz(new Date(Date.now() + 6 * 24 * 60 * 60 * 1000), tz);
-    const dueToday = should.filter((t) => t.due_at && eventDay(t.due_at, tz) <= today);
     const dated = events
       .filter((e) => e.start_at)
       .map((e) => ({ ...e, day: eventDay(e.start_at!, tz) }))
@@ -109,9 +135,12 @@ export async function handleTasks(req: Request, env: Env, path: string): Promise
       .sort((a, b) => (a.start_at! < b.start_at! ? -1 : a.start_at! > b.start_at! ? 1 : 0));
     const todayEvents = dated.filter((e) => e.day === today);
     const weekEvents = dated;
+    // UI: TODO = inbox+soon+should, WANT = someday, SCHEDULE = weekEvents
     return json({
+      inbox,
       soon,
-      should: dueToday.length ? dueToday : should.slice(0, 8),
+      should,
+      someday,
       todayEvents,
       weekEvents,
       timezone: tz,

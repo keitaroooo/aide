@@ -1,7 +1,15 @@
-import type { CalEvent, ChatMessage, Horizon, Task, TaskSource, User } from "./types";
+import type { CalEvent, ChatMessage, Domain, Horizon, Task, TaskSource, User } from "./types";
+import { resolveDomain } from "./types";
 
 export async function getUser(db: D1Database, userId: string): Promise<User | null> {
   return db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first<User>();
+}
+
+export async function getUserByEmail(db: D1Database, email: string): Promise<User | null> {
+  return db
+    .prepare("SELECT * FROM users WHERE lower(email) = lower(?) LIMIT 1")
+    .bind(email)
+    .first<User>();
 }
 
 export async function createUser(
@@ -54,19 +62,25 @@ export async function listTasks(
     clauses.push("status = 'open'");
   }
   const sql = `SELECT * FROM tasks WHERE ${clauses.join(" AND ")}
-    ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at ASC, updated_at DESC`;
+    ORDER BY CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at ASC,
+      priority DESC, updated_at DESC`;
   const res = await db
     .prepare(sql)
     .bind(...binds)
     .all<Task>();
-  return res.results ?? [];
+  return (res.results ?? []).map(normalizeTask);
+}
+
+function normalizeTask(t: Task): Task {
+  return { ...t, priority: t.priority ?? 0 };
 }
 
 export async function getTask(db: D1Database, userId: string, taskId: string): Promise<Task | null> {
-  return db
+  const row = await db
     .prepare("SELECT * FROM tasks WHERE id = ? AND user_id = ?")
     .bind(taskId, userId)
     .first<Task>();
+  return row ? normalizeTask(row) : null;
 }
 
 export async function createTask(
@@ -78,16 +92,18 @@ export async function createTask(
     notes?: string | null;
     horizon?: Horizon;
     due_at?: string | null;
+    domain?: Domain | null;
     source?: TaskSource;
     source_ref?: string | null;
   },
 ): Promise<Task> {
   const ts = new Date().toISOString();
+  const domain = resolveDomain(input.domain, input.notes);
   await db
     .prepare(
       `INSERT INTO tasks
-        (id, user_id, title, notes, horizon, due_at, status, source, source_ref, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
+        (id, user_id, title, notes, horizon, due_at, priority, domain, status, source, source_ref, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'open', ?, ?, ?, ?)`,
     )
     .bind(
       input.id,
@@ -96,6 +112,7 @@ export async function createTask(
       input.notes ?? null,
       input.horizon ?? "inbox",
       input.due_at ?? null,
+      domain,
       input.source ?? "manual",
       input.source_ref ?? null,
       ts,
@@ -109,24 +126,42 @@ export async function updateTask(
   db: D1Database,
   userId: string,
   taskId: string,
-  patch: Partial<Pick<Task, "title" | "notes" | "horizon" | "due_at" | "status">>,
+  patch: Partial<Pick<Task, "title" | "notes" | "horizon" | "due_at" | "priority" | "domain" | "status">>,
 ): Promise<Task | null> {
   const existing = await getTask(db, userId, taskId);
   if (!existing) return null;
+  const notes = patch.notes !== undefined ? patch.notes : existing.notes;
+  const domain =
+    patch.domain !== undefined
+      ? patch.domain
+      : resolveDomain(existing.domain, notes) ?? existing.domain;
   const next = {
     title: patch.title ?? existing.title,
-    notes: patch.notes !== undefined ? patch.notes : existing.notes,
+    notes,
     horizon: patch.horizon ?? existing.horizon,
     due_at: patch.due_at !== undefined ? patch.due_at : existing.due_at,
+    priority: patch.priority !== undefined ? patch.priority : (existing.priority ?? 0),
+    domain,
     status: patch.status ?? existing.status,
   };
   const updated_at = new Date().toISOString();
   await db
     .prepare(
-      `UPDATE tasks SET title = ?, notes = ?, horizon = ?, due_at = ?, status = ?, updated_at = ?
+      `UPDATE tasks SET title = ?, notes = ?, horizon = ?, due_at = ?, priority = ?, domain = ?, status = ?, updated_at = ?
        WHERE id = ? AND user_id = ?`,
     )
-    .bind(next.title, next.notes, next.horizon, next.due_at, next.status, updated_at, taskId, userId)
+    .bind(
+      next.title,
+      next.notes,
+      next.horizon,
+      next.due_at,
+      next.priority,
+      next.domain,
+      next.status,
+      updated_at,
+      taskId,
+      userId,
+    )
     .run();
   return getTask(db, userId, taskId);
 }
@@ -143,32 +178,36 @@ export async function findTaskBySource(
     .first<Task>();
 }
 
-export async function upsertEvent(
+export async function listEvents(db: D1Database, userId: string): Promise<CalEvent[]> {
+  const res = await db
+    .prepare(`SELECT * FROM events WHERE user_id = ? ORDER BY start_at ASC`)
+    .bind(userId)
+    .all<CalEvent>();
+  return res.results ?? [];
+}
+
+export async function findEventBySource(
+  db: D1Database,
+  userId: string,
+  sourceRef: string,
+): Promise<CalEvent | null> {
+  return db
+    .prepare("SELECT * FROM events WHERE user_id = ? AND source_ref = ?")
+    .bind(userId, sourceRef)
+    .first<CalEvent>();
+}
+
+export async function insertEvent(
   db: D1Database,
   input: {
     id: string;
     user_id: string;
     title: string;
-    start_at?: string | null;
-    end_at?: string | null;
-    source_ref?: string | null;
+    start_at: string | null;
+    end_at: string | null;
+    source_ref: string;
   },
 ): Promise<void> {
-  const existing = input.source_ref
-    ? await db
-        .prepare("SELECT id FROM events WHERE user_id = ? AND source_ref = ?")
-        .bind(input.user_id, input.source_ref)
-        .first<{ id: string }>()
-    : null;
-  if (existing) {
-    await db
-      .prepare(
-        `UPDATE events SET title = ?, start_at = ?, end_at = ? WHERE id = ? AND user_id = ?`,
-      )
-      .bind(input.title, input.start_at ?? null, input.end_at ?? null, existing.id, input.user_id)
-      .run();
-    return;
-  }
   await db
     .prepare(
       `INSERT INTO events (id, user_id, title, start_at, end_at, source_ref, created_at)
@@ -178,20 +217,24 @@ export async function upsertEvent(
       input.id,
       input.user_id,
       input.title,
-      input.start_at ?? null,
-      input.end_at ?? null,
-      input.source_ref ?? null,
+      input.start_at,
+      input.end_at,
+      input.source_ref,
       new Date().toISOString(),
     )
     .run();
 }
 
-export async function listEvents(db: D1Database, userId: string): Promise<CalEvent[]> {
-  const res = await db
-    .prepare(`SELECT * FROM events WHERE user_id = ? ORDER BY start_at ASC`)
-    .bind(userId)
-    .all<CalEvent>();
-  return res.results ?? [];
+export async function updateEventTimes(
+  db: D1Database,
+  userId: string,
+  eventId: string,
+  next: { title: string; start_at: string | null; end_at: string | null },
+): Promise<void> {
+  await db
+    .prepare(`UPDATE events SET title = ?, start_at = ?, end_at = ? WHERE id = ? AND user_id = ?`)
+    .bind(next.title, next.start_at, next.end_at, eventId, userId)
+    .run();
 }
 
 export async function listChat(db: D1Database, userId: string, limit = 40): Promise<ChatMessage[]> {
@@ -214,53 +257,6 @@ export async function addChat(
     )
     .bind(input.id, input.user_id, input.role, input.content, new Date().toISOString())
     .run();
-}
-
-export async function upsertOauthToken(
-  db: D1Database,
-  input: {
-    id: string;
-    user_id: string;
-    provider: string;
-    access_token: string;
-    refresh_token?: string | null;
-    expires_at?: string | null;
-    scopes?: string | null;
-  },
-): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO oauth_tokens (id, user_id, provider, access_token, refresh_token, expires_at, scopes)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_id, provider) DO UPDATE SET
-         access_token = excluded.access_token,
-         refresh_token = COALESCE(excluded.refresh_token, oauth_tokens.refresh_token),
-         expires_at = excluded.expires_at,
-         scopes = excluded.scopes`,
-    )
-    .bind(
-      input.id,
-      input.user_id,
-      input.provider,
-      input.access_token,
-      input.refresh_token ?? null,
-      input.expires_at ?? null,
-      input.scopes ?? null,
-    )
-    .run();
-}
-
-export async function getOauthToken(
-  db: D1Database,
-  userId: string,
-  provider: string,
-): Promise<{ access_token: string; refresh_token: string | null; expires_at: string | null } | null> {
-  return db
-    .prepare(
-      `SELECT access_token, refresh_token, expires_at FROM oauth_tokens WHERE user_id = ? AND provider = ?`,
-    )
-    .bind(userId, provider)
-    .first();
 }
 
 export async function listUsersForDigest(db: D1Database): Promise<User[]> {

@@ -1,29 +1,18 @@
-import { createUser, getUser, updateUserSettings } from "../db";
+import { createUser, getUser, getUserByEmail, updateUserSettings } from "../db";
 import type { Env, User } from "../types";
 import { id, nowIso } from "../types";
+
+/** Access 通過後にだけ付く。Origin 直叩きでは信用しない（API は Access 背後前提）。 */
+export function accessAuthenticatedEmail(request: Request): string | null {
+  const email = request.headers.get("Cf-Access-Authenticated-User-Email");
+  return email?.trim().toLowerCase() || null;
+}
 
 const DEV_USER_ID = "dev:local";
 
 const COOKIE = "aide_session";
 const SESSION_DAYS = 30;
 const AUTOMATION_HEADER = "X-Aide-Automation-Token";
-
-async function hmacSign(secret: string, value: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
-  return btoa(String.fromCharCode(...new Uint8Array(sig)));
-}
-
-async function hmacVerify(secret: string, value: string, signature: string): Promise<boolean> {
-  const expected = await hmacSign(secret, value);
-  return expected === signature;
-}
 
 export function cookieHeader(sessionId: string, maxAgeSec: number): string {
   const secure = true;
@@ -106,18 +95,24 @@ export async function requireUser(env: Env, request: Request): Promise<User | Re
   return user;
 }
 
-export async function findOrCreateOAuthUser(
-  env: Env,
-  input: { provider: string; providerUserId: string; email?: string | null; name: string },
-): Promise<User> {
-  const stableId = `${input.provider}:${input.providerUserId}`;
-  const existing = await getUser(env.DB, stableId);
-  if (existing) return existing;
-  return createUser(env.DB, {
-    id: stableId,
-    name: input.name,
-    email: input.email ?? null,
-  });
+/** 個人用の1ユーザー。ローカルの dev:local に入った行はここへ寄せる。 */
+export async function ensureOwner(env: Env): Promise<User | null> {
+  const email = env.OWNER_EMAIL?.trim();
+  if (!email) return null;
+  let user = await getUserByEmail(env.DB, email);
+  if (!user) {
+    user = await createUser(env.DB, {
+      id: `owner:${email.toLowerCase()}`,
+      name: email.split("@")[0] || "Owner",
+      email,
+    });
+  }
+  for (const table of ["tasks", "events", "chat_messages", "push_subscriptions"] as const) {
+    await env.DB.prepare(`UPDATE ${table} SET user_id = ? WHERE user_id = ?`)
+      .bind(user.id, DEV_USER_ID)
+      .run();
+  }
+  return user;
 }
 
 /** Stable single user for ALLOW_DEV_LOGIN — session is reissued, user is reused. */
@@ -130,25 +125,4 @@ export async function createDevUser(env: Env, name: string): Promise<User> {
     return existing;
   }
   return createUser(env.DB, { id: DEV_USER_ID, name, email: "dev@local" });
-}
-
-/** Signed state for OAuth CSRF. */
-export async function makeOAuthState(env: Env, payload: Record<string, string>): Promise<string> {
-  const body = btoa(JSON.stringify(payload));
-  const sig = await hmacSign(env.SESSION_SECRET, body);
-  return `${body}.${sig}`;
-}
-
-export async function parseOAuthState(
-  env: Env,
-  state: string,
-): Promise<Record<string, string> | null> {
-  const [body, sig] = state.split(".");
-  if (!body || !sig) return null;
-  if (!(await hmacVerify(env.SESSION_SECRET, body, sig))) return null;
-  try {
-    return JSON.parse(atob(body)) as Record<string, string>;
-  } catch {
-    return null;
-  }
 }

@@ -1,13 +1,7 @@
 import { handleAuth } from "./auth/routes";
 import { requireUser } from "./auth/session";
 import { deletePushSub, listChat, savePushSub } from "./db";
-import {
-  importGitHubProjects,
-  importGoogleCalendar,
-  importGoogleTasks,
-  importMdLists,
-  type MdListItem,
-} from "./import";
+import { importEvents, importMdLists, type CalImportItem, type MdListItem } from "./import";
 import { runDigestCron } from "./push/webpush";
 import { handleTasks } from "./routes/tasks";
 import { runSecretary } from "./secretary";
@@ -68,34 +62,23 @@ async function route(req: Request, env: Env): Promise<Response> {
     return json(result);
   }
 
-  if (path === "/api/import/google-tasks" && req.method === "POST") {
-    const user = await requireUser(env, req);
-    if (user instanceof Response) return user;
-    try {
-      const result = await importGoogleTasks(env, user);
-      return json(result);
-    } catch (e) {
-      return error(e instanceof Error ? e.message : "import failed", 400);
-    }
+  // Google / GitHub アプリ内取込は廃止（D1 に OAuth を置かない）。CLI を使う。
+  if (
+    path === "/api/import/google" ||
+    path === "/api/import/google-tasks" ||
+    path === "/api/import/google-calendar" ||
+    path === "/api/import/github-projects"
+  ) {
+    return error("Import via app OAuth disabled — use CLI", 410);
   }
 
-  if (path === "/api/import/google-calendar" && req.method === "POST") {
+  if (path === "/api/import/events" && req.method === "POST") {
     const user = await requireUser(env, req);
     if (user instanceof Response) return user;
+    const body = (await req.json().catch(() => ({}))) as { items?: CalImportItem[] };
+    if (!Array.isArray(body.items)) return error("items must be an array");
     try {
-      const result = await importGoogleCalendar(env, user);
-      return json(result);
-    } catch (e) {
-      return error(e instanceof Error ? e.message : "import failed", 400);
-    }
-  }
-
-  if (path === "/api/import/github-projects" && req.method === "POST") {
-    const user = await requireUser(env, req);
-    if (user instanceof Response) return user;
-    const body = (await req.json().catch(() => ({}))) as { owner?: string; number?: number };
-    try {
-      const result = await importGitHubProjects(env, user, body);
+      const result = await importEvents(env, user, body.items);
       return json(result);
     } catch (e) {
       return error(e instanceof Error ? e.message : "import failed", 400);

@@ -1,49 +1,36 @@
 # Aide
 
-**暮らしのアシスタント**（Aide = 補佐・助手）。話すだけで、やることを整える。
+**暮らしのアシスタント**（Aide = 補佐・助手）。読み取り専用。入力は Slack と Google カレンダー。
 
-この README が MVP の仕様正本。実装は `api/` · `web/` を参照。
+この README が MVP の仕様正本。以前の設計は [aide-design.md](aide-design.md)。実装は `api/` · `web/` を参照。
 
 ---
 
 ## 1. 原則
 
-- **話すだけで整える** — 主入力は自然言語。画面はいまやることを確認する場
-- **いま何をすべきか** — 画面・返答とも一目でわかることを優先
-- **勝手な優先順位は付けない** — ユーザーが言っていない順位付けはしない
-- **単体で動く** — 未連携でもメモ・タスク・アシスタント・Push が使える。Google / GitHub は **インポートのみ**（書き戻しは将来）
-- **頭脳・記憶は選べる** — LLM もタスクデータも **クラウド / ローカル** を選択可能
+- **読み取り専用。入力は Slack と Google カレンダー。作業は手元（Cursorなど）。** — UI にも同じ一文（`web/src/lib/principle.ts`）
+- **いま何をすべきか** — 画面は読み取り専用。一旦の入力は Slack と Google カレンダーのみ。勝手な優先順位は付けない
+- **単体で動く** — 未連携でも一覧は見られる。**いまの入力は Slack と Google カレンダーのみ。画面は読み取り専用。** 取込はローカルの CLI（OAuth トークンを D1 に置かない）。将来はアプリで連携してセットアップできればよい
+- **頭脳・記憶は選べる** — LLM もタスクデータもクラウド / ローカルを選択可（個人段階の「話す」は Cursor でよい）
 
 ---
 
-## 2. 時間軸（horizon）
+## 2. ホームの見え方
 
-数値の優先度は持たない。人が自然言語でわかる単位。
+ホームは **TODO / WANT / SCHEDULE**。label（GitHub 相当）で絞る。Google カレンダーから完全移行できたら SCHEDULE を2番目（TODO / SCHEDULE / WANT）にする。
 
-| キー | 人が言うイメージ | 意味 |
-|------|------------------|------|
-| `inbox` | 仕分け前 | インポート直後・雑メモ |
-| `soon` | 直近やること | 今日〜数日で手を付ける |
-| `should` | やるべきこと | 期限・義務・約束がある |
-| `someday` | いつかやりたいこと | やりたいが今ではない |
+| UI | 中身 | 保存 |
+|----|------|------|
+| **TODO** | やること（未仕分け含む） | `horizon`: inbox / soon / should |
+| **WANT** | いつか・欲しい | `horizon`: someday |
+| **SCHEDULE** | 時刻付き予定 | `events`（カレンダー） |
 
-「来週でいい」「今日中にやりたい」と言うと、アシスタントが `horizon` / `due_at` を更新する。
+| 軸 | 役割 |
+|----|------|
+| **label / domain** | `assets` · `engineering` · `health` · `self` · `trip`。TODO / WANT を横断フィルタ |
+| **priority** | 高 / 中 / 低。いまの見え方の中での並び（期限優先の次） |
 
-```mermaid
-stateDiagram-v2
-  [*] --> inbox: メモ追加・インポート
-  inbox --> soon: 「直近で」「今日」
-  inbox --> should: 「やるべき」「期限」
-  inbox --> someday: 「いつかでいい」
-  soon --> should: 期限が付いた
-  soon --> someday: 「あとでいい」
-  should --> soon: 「今日やる」
-  should --> someday: 「先送り」
-  soon --> [*]: 完了
-  should --> [*]: 完了
-  someday --> soon: 「そろそろやる」
-  inbox --> [*]: 完了
-```
+DB の `horizon` は内部キー。画面では TODO / WANT に畳む。「来週でいい」などと言うと `horizon` / `due_at` を更新する。
 
 ---
 
@@ -70,10 +57,12 @@ flowchart TB
   end
 
   subgraph external [External]
-    google["Google OAuth\nCalendar / Tasks"]
-    github["GitHub OAuth\nProjects V2"]
     openai["OpenAI 互換 API\n任意"]
     pushSvc["Push Service\nFCM / Mozilla 等"]
+  end
+
+  subgraph pc_cli [User_PC_CLI]
+    cli["CLI import\ngh / google-workspace-mcp"]
   end
 
   pwa --> pages
@@ -83,16 +72,15 @@ flowchart TB
   workers --> d1
   workers -.-> ai
   workers -.-> openai
-  workers --> google
-  workers --> github
   workers --> pushSvc
   pushSvc -->|"Web Push"| pwa
+  cli -->|"POST /api/import/*"| workers
 ```
 
 | 層 | 技術 | 役割 |
 |----|------|------|
 | FE | Cloudflare Pages（Vite + React PWA） | UI・Web Push・（任意）ローカル LLM / ローカル記憶 |
-| BE | Cloudflare Workers | クラウド記憶時の API・OAuth・インポート・Cron |
+| BE | Cloudflare Workers | クラウド記憶時の API・CLI 取込受け口・Cron |
 | DB（cloud） | D1 | `storage_mode=cloud` の正本 |
 | DB（local） | IndexedDB（PWA）または PC 上 SQLite | `storage_mode=local` の正本 |
 | 定期 | Workers Cron または OS / SW ローカル通知 | ダイジェスト |
@@ -125,13 +113,13 @@ aide/
   api/          Workers + D1
     migrations/ D1 スキーマ
     src/
-      auth/     セッション · OAuth
+      auth/     セッション · Access / 開発ログイン
       secretary/ アシスタント（クラウド LLM / heuristic）
-      import/   Google · GitHub
+      import/   md-lists（CLI 用）
       push/     Web Push · ダイジェスト
       routes/   タスク · ボード
   web/          PWA フロント
-    src/pages/  メイン · 設定オーバーレイ · ログイン
+    src/pages/  メイン · ログイン
     src/lib/    （予定）localSecretary — Bonsai 呼び出し
 ```
 
@@ -142,7 +130,6 @@ aide/
 ```mermaid
 erDiagram
   users ||--o{ sessions : has
-  users ||--o{ oauth_tokens : has
   users ||--o{ tasks : owns
   users ||--o{ events : owns
   users ||--o{ chat_messages : has
@@ -176,9 +163,9 @@ erDiagram
 
 | エンティティ | 要点 |
 |-------------|------|
-| `tasks` | `horizon`: inbox/soon/should/someday · `source`: manual/google_*/github/md_list · `source_ref` で冪等インポート |
-| `events` | Calendar 取込。ホーム表示。任意でタスク化 |
-| `oauth_tokens` | provider = `google` \| `github` |
+| `tasks` | `horizon` · `domain`（label）· `priority` · `source` / `source_ref` で冪等インポート |
+| `events` | Calendar 取込（CLI）。ホームの SCHEDULE。任意でタスク化 |
+| `oauth_tokens` | スキーマ残存・未使用。D1 に OAuth を置かない。既存行は消してよい |
 | `push_subscriptions` | endpoint 一意。Cron から送信 |
 | `chat_messages` | アシスタントの直近履歴 |
 
@@ -196,25 +183,21 @@ sequenceDiagram
   participant W as Web
   participant A as Workers
   participant D as D1
-  participant IdP as Google_or_GitHub
 
   alt Dev login
-    U->>W: はじめる
+    U->>W: 開発ログイン
     W->>A: POST /api/auth/dev-login
     A->>D: users + sessions
     A-->>W: Set-Cookie aide_session
-  else OAuth login or link
-    U->>W: Google / GitHub
-    W->>A: GET /api/auth/{provider}
-    A-->>U: redirect to IdP
-    U->>IdP: 認可
-    IdP->>A: callback?code
-    A->>D: users / oauth_tokens / sessions
-    A-->>W: redirect /?linked=...
+  else Access login
+    U->>W: Access メール OTP 後「続ける」
+    W->>A: POST /api/auth/access-login
+    A->>D: users + sessions
+    A-->>W: Set-Cookie aide_session
   end
 ```
 
-Cookie: `aide_session`（HttpOnly · SameSite=Lax）。ログイン済み OAuth は **link**、未ログインは **login**。
+Cookie: `aide_session`（HttpOnly · SameSite=Lax）。**アプリ内 Google / GitHub OAuth は廃止**（410）。
 
 ### 5.2 アシスタントチャット
 
@@ -249,27 +232,26 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-  participant U as User
-  participant W as Web
+  participant CLI as PC_CLI
   participant A as Workers
   participant D as D1
-  participant Ext as Google_or_GitHub
 
-  U->>W: 設定で取込
-  W->>A: POST /api/import/...
-  A->>Ext: API list
+  CLI->>CLI: gh / google-workspace-mcp で取得
+  CLI->>A: POST /api/import/...
   loop each item
     A->>D: source_ref で既存確認 → INSERT or skip
   end
-  A-->>W: imported / skipped
+  A-->>CLI: imported / skipped
 ```
 
-| エンドポイント | 先 | 結果 |
-|----------------|----|------|
-| `/api/import/google-tasks` | Google Tasks | `tasks`（due あり→`should`、なし→`inbox`） |
-| `/api/import/google-calendar` | Calendar（2 週間） | `events` |
-| `/api/import/github-projects` | Projects V2 | `tasks` → `inbox` |
-| `/api/import/md-lists` | keitaro-yamaguchi md リスト（body `items`） | `tasks` → 既定 `someday`（`source=md_list` 冪等） |
+| 取込 | CLI（keitaro-yamaguchi） | API | 結果 |
+|------|--------------------------|-----|------|
+| Google Tasks | `python3 .agent/scripts/import_google_tasks_to_aide.py --execute` | `POST /api/import/md-lists` | `tasks`（`source=md_list`） |
+| Google Calendar | `python3 .agent/scripts/import_google_calendar_to_aide.py --execute` | `POST /api/import/events` | `events`（`source_ref=gcal:…` 冪等 · 今日から7日） |
+| GitHub Projects | `python3 .agent/scripts/import_projects_to_aide.py --execute` | `POST /api/import/md-lists` | `tasks`（`source=md_list`） |
+| md リスト | `python3 .agent/scripts/import_md_lists_to_aide.py --execute` | `POST /api/import/md-lists` | `tasks` → 既定 `someday`（`source=md_list` 冪等） |
+
+アプリ内 `/api/import/google*` · `github-projects` は **410**（D1 に OAuth を置かない）。
 
 **朝ダイジェスト**: Cron が timezone + `digest_time` 一致ユーザーの `soon` / 期限付き `should` を Web Push 送信。事前に `POST /api/push/subscribe`。
 
@@ -280,11 +262,10 @@ sequenceDiagram
 | Method | Path | 説明 |
 |--------|------|------|
 | GET | `/api/health` | ヘルス |
-| GET | `/api/auth/me` | ユーザー · 連携 · feature flags |
+| GET | `/api/auth/me` | ユーザー · feature flags |
 | POST | `/api/auth/dev-login` | 開発ログイン |
+| POST | `/api/auth/access-login` | Access OTP 後のセッション発行 |
 | POST | `/api/auth/logout` | ログアウト |
-| GET | `/api/auth/google` · `/callback` | Google OAuth |
-| GET | `/api/auth/github` · `/callback` | GitHub OAuth |
 | GET | `/api/home` | 直近 · やるべき · 今日の予定 |
 | GET | `/api/board` | 4 列ボード |
 | GET/POST | `/api/tasks` | 一覧 / 作成 |
@@ -293,29 +274,29 @@ sequenceDiagram
 | POST | `/api/events/:id/to-task` | 予定→タスク |
 | GET/POST | `/api/chat` | 履歴 / アシスタント |
 | PATCH | `/api/settings` | digest_time · timezone |
-| POST | `/api/import/google-tasks` | Tasks 取込 |
-| POST | `/api/import/google-calendar` | Calendar 取込 |
-| POST | `/api/import/github-projects` | Projects 取込 |
-| POST | `/api/import/md-lists` | md リスト冪等取込（body: `{ items }`） |
+| POST | `/api/import/md-lists` | md リスト冪等取込（body: `{ items }` · CLI 用） |
+| POST | `/api/import/events` | Calendar 冪等取込（body: `{ items: [{ title, source_ref, start_at, end_at }] }` · CLI 用） |
 | POST | `/api/push/subscribe` | Push 登録 |
 | POST | `/api/push/unsubscribe` | 解除 |
 | POST | `/api/push/test` | テスト送信 |
+
+廃止（410）: `/api/auth/google` · `/callback`、`/api/auth/github` · `/callback`、`/api/import/google*` · `github-projects`
 
 ---
 
 ## 7. 画面
 
-**メイン1画面** — 会話＋**今日／一週間の予定（時系列）**＋直近／やるべき。話すだけで整える。
+**ホームだけ** — **TODO / WANT / SCHEDULE**＋label フィルタ。ボードは置かない。SCHEDULE を2番目にするのはカレンダー完全移行のあと。
 
-**設定** — ヘッダーからオーバーレイで開く（OAuth · インポート · ダイジェスト · Push · ログアウト）。
+**設定ボタンは置かない。** ダイジェスト · Push · ログアウトの画面はない。
 
 ---
 
 ## 8. スコープ
 
-**MVP（実装済み）** — 1ページ UI、タスク / メモ / アシスタント、Google · GitHub インポート、Web Push 朝ダイジェスト、クラウド LLM / ヒューリスティック
+**MVP（実装済み）** — 1ページ UI、タスク / メモ / アシスタント、CLI 取込（Google Tasks · GitHub Projects · md リスト。Calendar は未）、Web Push 朝ダイジェスト、クラウド LLM / ヒューリスティック。認証は個人用のみ（本番は Access のメール認証、ローカルは登録メール）
 
-**次** — ローカル LLM（Bonsai）・ローカル記憶（IndexedDB）、設定 UI（`storage_mode` / `llm_mode`）、**仲間** 寄りの関係性、**カレンダー書き戻し**（現状インポートのみ）
+**次** — 登録してユーザーごとのマイページ、アプリでの連携・セットアップ（いまはローカルのみ）、ローカル LLM（Bonsai）・ローカル記憶（IndexedDB）、設定 UI（`storage_mode` / `llm_mode`）、**仲間** 寄りの関係性、Calendar の完全移行後に SCHEDULE を2番目へ、**カレンダー書き戻し**
 
 **v2 以降** — Slack / LINE 通知、双方向同期、local ↔ cloud 同期、ネイティブ / サイドカー SQLite
 
@@ -337,44 +318,29 @@ npm install
 npm run dev                      # http://127.0.0.1:5180 → /api を 8790 へプロキシ
 ```
 
-`ALLOW_DEV_LOGIN=true` で開発ログイン可。本番相当は **Google / GitHub でログイン** ボタンを使う。
+`ALLOW_DEV_LOGIN=true` のローカルは登録メールで入る（個人用のみ）。本番は Access のメール OTP → 「続ける」（`POST /api/auth/access-login`）。
 
-### OAuth 設定（ログインボタンを有効にする）
+### 取込（CLI · 手元トークン）
 
-`api/.dev.vars` に Client ID / Secret を入れると、ログイン画面のボタンが実際に動く。
+keitaro-yamaguchi 側:
 
-**Google**（Calendar / Tasks 取込用）
+- Google Tasks: `python3 .agent/scripts/import_google_tasks_to_aide.py --execute`
+- GitHub Projects: `python3 .agent/scripts/import_projects_to_aide.py --execute`
+- md リスト: `python3 .agent/scripts/import_md_lists_to_aide.py --execute`
+- Google Calendar: `python3 .agent/scripts/import_google_calendar_to_aide.py --execute`（今日から7日 · `POST /api/import/events`）
 
-1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) で OAuth クライアント（ウェブアプリ）を作成
-2. 承認済みのリダイレクト URI:
-   `http://127.0.0.1:5180/api/auth/google/callback`
-3. Google Calendar API · Google Tasks API を有効化
-4. `.dev.vars` に追記:
-   ```
-   GOOGLE_CLIENT_ID=...
-   GOOGLE_CLIENT_SECRET=...
-   ```
-5. API（`npm run dev`）を再起動 → 「Google でログイン」
-
-**GitHub**（Projects 取込用）
-
-1. [New OAuth App](https://github.com/settings/applications/new)
-2. Homepage: `http://127.0.0.1:5180`  
-   Callback: `http://127.0.0.1:5180/api/auth/github/callback`
-3. `.dev.vars` に `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` を追記し API 再起動
+認証は `gh` / `~/.config/google-workspace-mcp/`（PC のみ）。aide の D1 には載せない。
 
 ### 環境変数
 
 | 名 | 用途 |
 |----|------|
-| `SESSION_SECRET` | セッション · OAuth state |
+| `SESSION_SECRET` | セッション署名 |
 | `APP_URL` | フロント origin（`http://127.0.0.1:5180`） |
 | `ALLOW_DEV_LOGIN` | 開発ログイン |
-| `OWNER_EMAIL` | `AUTOMATION_TOKEN` が成りすますユーザーのメール |
+| `OWNER_EMAIL` | Access「続ける」· 自動化の対象ユーザー |
 | `AUTOMATION_TOKEN` | 取込スクリプト用。`X-Aide-Automation-Token` ヘッダで送る |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google ログイン · Calendar/Tasks |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub ログイン · Projects |
-| `VAPID_*` | Web Push |
+| `VAPID_*` | Web Push（任意） |
 | `OPENAI_API_KEY` · `OPENAI_BASE_URL` | 任意 LLM |
 
 ### デプロイ
@@ -382,7 +348,7 @@ npm run dev                      # http://127.0.0.1:5180 → /api を 8790 へ�
 1. `npx wrangler d1 create aide` → `api/wrangler.jsonc` の `database_id` 更新
 2. `cd api && npm run db:migrate:remote && npm run deploy`
 3. `cd web && npm run build` → Pages（`/api` は Workers へプロキシ）
-4. OAuth / VAPID を `wrangler secret put`
+4. `OWNER_EMAIL` · `SESSION_SECRET` ·（任意）VAPID を `wrangler secret put`
 5. Workers AI 利用時は `wrangler.jsonc` に `ai.binding` 追加
 6. 公開 URL の Access 保護: `./infra/apply.fish`（手順は [`infra/README.md`](infra/README.md)）
 
@@ -390,9 +356,13 @@ npm run dev                      # http://127.0.0.1:5180 → /api を 8790 へ�
 
 本番 Pages（`https://aide-1ll.pages.dev` · preview `*.aide-1ll.pages.dev`）と API 直叩き（`https://aide-api.keitaro-cryptocurrency.workers.dev`）は **Cloudflare Access の背後**にある。ブラウザでは許可メールへの OTP ログイン。import スクリプト等は Access セッション / Service Token が要るか、ブラウザ認証後の Pages 経由で叩く。
 
-Access は「URL に届く人」を絞るだけで、**誰のタスクか**は aide 側のログインで決まる。門は 2 つある:
+**認証**: 一旦は個人用のみ。本番は Access のメール OTP → 「続ける」（`POST /api/auth/access-login`）。ローカルは登録メール（`POST /api/auth/owner-login`）。将来は登録してユーザーごとのマイページ。**アプリ内 Google / GitHub OAuth は廃止**（410）。
+
+**取込**: PC の CLI（`gh` · `google-workspace-mcp` の手元トークン → aide API）。D1 に OAuth を置かない。既存 `oauth_tokens` 行は消してよい。
+
+門は 2 つ（Access＝URL、aide セッション＝誰のタスクか）:
 
 | | 誰を通すか | 自動化での渡し方 |
 |--|-----------|-----------------|
 | Cloudflare Access | 許可メール · Service Token | `CF-Access-Client-Id` / `CF-Access-Client-Secret` |
-| aide のセッション | Google ログイン · 開発ログイン | `X-Aide-Automation-Token`（= `AUTOMATION_TOKEN`） |
+| aide のセッション | Access の続き · ローカルの登録メール | `X-Aide-Automation-Token`（= `AUTOMATION_TOKEN`） |

@@ -1,6 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./lib/auth";
-import { BoardPage } from "./pages/BoardPage";
 import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
 
@@ -27,7 +26,6 @@ export function App() {
     <div className="app-shell">
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/board" element={<BoardPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>
