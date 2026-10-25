@@ -67,9 +67,7 @@ curl -sI -H 'Accept: text/html' https://aide-api.keitaro-cryptocurrency.workers.
 | `CF-Access-Client-Id` | `CF_ACCESS_CLIENT_ID` |
 | `CF-Access-Client-Secret` | `CF_ACCESS_CLIENT_SECRET` |
 
-Access を通ったあと **aide 自身のログイン**も要る。`ALLOW_DEV_LOGIN=false` の本番では
-`X-Aide-Automation-Token`（Worker の `AUTOMATION_TOKEN` secret）を付けると `OWNER_EMAIL` の
-ユーザーとして扱われる。Access の Service Token とは別物なので両方必要。
+Access を通ったリクエストは、個人用のオーナーとして扱う。開発用ログインと `AUTOMATION_TOKEN` は取込に使わない。
 
 値の取り出し（secret は画面に出さない）:
 

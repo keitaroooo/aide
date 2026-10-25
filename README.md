@@ -17,17 +17,20 @@
 
 ## 2. ホームの見え方
 
-ホームは **TODO / WANT / SCHEDULE**。label（GitHub 相当）で絞る。Google カレンダーから完全移行できたら SCHEDULE を2番目（TODO / SCHEDULE / WANT）にする。
+ホームは **In Progress / TODO / WANT / SCHEDULE**。label（GitHub 相当）で絞る。Google カレンダーから完全移行できたら SCHEDULE を2番目（TODO / SCHEDULE / WANT）にする。
+
+公開 URL は読み取り専用。ローカル（`npm run dev`）だけ各行の右に完了のチェックがあり、`task-list.md` を `[x]` に、`tasks/*.md` を `status: done` にする。本番は Cloudflare の Git 連携。Pages `aide` は root `web`、build `npm run build`、output `dist`。Worker `aide-api` は root `api`、deploy `npx wrangler d1 migrations apply aide --remote && npx wrangler deploy`。本番ブランチは main。GitHub Actions の secret は使わない。
 
 | UI | 中身 | 保存 |
 |----|------|------|
+| **In Progress** | 着手中（`tasks/*.md` · Projects の In progress） | notes の `kind=task` または `status=In progress` |
 | **TODO** | やること（未仕分け含む） | `horizon`: inbox / soon / should |
 | **WANT** | いつか・欲しい | `horizon`: someday |
 | **SCHEDULE** | 時刻付き予定 | `events`（カレンダー） |
 
 | 軸 | 役割 |
 |----|------|
-| **label / domain** | `assets` · `engineering` · `health` · `self` · `trip`。TODO / WANT を横断フィルタ |
+| **label / domain** | `assets` · `engineering` · `health` · `self` · `trip`。複数選択。未選択はすべて |
 | **priority** | 高 / 中 / 低。いまの見え方の中での並び（期限優先の次） |
 
 DB の `horizon` は内部キー。画面では TODO / WANT に畳む。「来週でいい」などと言うと `horizon` / `due_at` を更新する。
@@ -338,8 +341,7 @@ keitaro-yamaguchi 側:
 | `SESSION_SECRET` | セッション署名 |
 | `APP_URL` | フロント origin（`http://127.0.0.1:5180`） |
 | `ALLOW_DEV_LOGIN` | 開発ログイン |
-| `OWNER_EMAIL` | Access「続ける」· 自動化の対象ユーザー |
-| `AUTOMATION_TOKEN` | 取込スクリプト用。`X-Aide-Automation-Token` ヘッダで送る |
+| `OWNER_EMAIL` | Access を通った人を個人用ユーザーにする |
 | `VAPID_*` | Web Push（任意） |
 | `OPENAI_API_KEY` · `OPENAI_BASE_URL` | 任意 LLM |
 
@@ -365,4 +367,4 @@ keitaro-yamaguchi 側:
 | | 誰を通すか | 自動化での渡し方 |
 |--|-----------|-----------------|
 | Cloudflare Access | 許可メール · Service Token | `CF-Access-Client-Id` / `CF-Access-Client-Secret` |
-| aide のセッション | Access の続き · ローカルの登録メール | `X-Aide-Automation-Token`（= `AUTOMATION_TOKEN`） |
+| aide のユーザー | Access を通った個人 | メール、または Service Token の JWT |

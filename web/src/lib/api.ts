@@ -21,6 +21,7 @@ export interface Task {
   domain?: Domain | null;
   status: string;
   source: string;
+  source_ref?: string | null;
 }
 
 export const PRIORITY_LABEL = ["低", "中", "高"] as const;

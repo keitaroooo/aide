@@ -12,7 +12,6 @@ const DEV_USER_ID = "dev:local";
 
 const COOKIE = "aide_session";
 const SESSION_DAYS = 30;
-const AUTOMATION_HEADER = "X-Aide-Automation-Token";
 
 export function cookieHeader(sessionId: string, maxAgeSec: number): string {
   const secure = true;
@@ -54,28 +53,22 @@ export async function destroySession(env: Env, sessionId: string): Promise<void>
   await env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(sessionId).run();
 }
 
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-/** Cookie を持てない取込スクリプト用。オーナーとして扱うので Access の内側でのみ使う。 */
-async function automationUser(env: Env, request: Request): Promise<User | null> {
-  const token = request.headers.get(AUTOMATION_HEADER);
-  if (!token || !env.AUTOMATION_TOKEN || !env.OWNER_EMAIL) return null;
-  if (!constantTimeEqual(token, env.AUTOMATION_TOKEN)) return null;
-  const row = await env.DB.prepare(`SELECT id FROM users WHERE email = ? LIMIT 1`)
-    .bind(env.OWNER_EMAIL)
-    .first<{ id: string }>();
-  if (!row) return null;
-  return getUser(env.DB, row.id);
-}
-
 export async function requireUser(env: Env, request: Request): Promise<User | Response> {
-  const automation = await automationUser(env, request);
-  if (automation) return automation;
+  const accessEmail = accessAuthenticatedEmail(request);
+  if (accessEmail) {
+    if (!env.OWNER_EMAIL || accessEmail !== env.OWNER_EMAIL.trim().toLowerCase()) {
+      return new Response(JSON.stringify({ error: "個人用のみ" }), { status: 403 });
+    }
+    const owner = await ensureOwner(env);
+    if (!owner) return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    return owner;
+  }
+
+  // Service Token はメールが付かない。JWT は Access が付ける。個人用なのでオーナー。
+  if (request.headers.get("Cf-Access-Jwt-Assertion")) {
+    const owner = await ensureOwner(env);
+    if (owner) return owner;
+  }
 
   const sessionId = readSessionId(request);
   if (!sessionId) return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
@@ -87,6 +80,10 @@ export async function requireUser(env: Env, request: Request): Promise<User | Re
   if (!row || row.expires_at < nowIso()) {
     if (sessionId) await destroySession(env, sessionId);
     return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+  }
+  if (row.user_id === DEV_USER_ID && env.OWNER_EMAIL) {
+    const owner = await ensureOwner(env);
+    if (owner) return owner;
   }
   const user = await getUser(env.DB, row.user_id);
   if (!user) {
@@ -107,7 +104,8 @@ export async function ensureOwner(env: Env): Promise<User | null> {
       email,
     });
   }
-  for (const table of ["tasks", "events", "chat_messages", "push_subscriptions"] as const) {
+  // sessions も移す。古い dev:local のクッキーのままだと、移したタスクが見えない。
+  for (const table of ["tasks", "events", "chat_messages", "push_subscriptions", "sessions"] as const) {
     await env.DB.prepare(`UPDATE ${table} SET user_id = ? WHERE user_id = ?`)
       .bind(user.id, DEV_USER_ID)
       .run();
